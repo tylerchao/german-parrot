@@ -174,7 +174,7 @@
       </div>
 
       <div class="player">
-        <button class="play" id="playBtn" data-i18n-title="playTitle" title="播放 (Enter)">▶</button>
+        <button class="play" id="playBtn" data-i18n-title="playTitle" title="播放 (Space)">▶</button>
         <div>
           <div class="speeds" id="speeds">
             <button class="chip" data-rate="0.6">0.6×</button>
@@ -211,6 +211,7 @@
       <div class="feedback" id="feedback"></div>
 
       <div class="keys">
+        <span><kbd>Space</kbd> <span data-i18n="keySpace"></span></span>
         <span><kbd>Enter</kbd> <span data-i18n="keyEnter"></span></span>
         <span><kbd>Shift</kbd>+<kbd>Enter</kbd> <span data-i18n="keyHint"></span></span>
         <span><kbd>Esc</kbd> <span data-i18n="keySlow"></span></span>
@@ -745,7 +746,20 @@ $("speeds").onclick = e => {
   playCurrent(); answer.focus();
 };
 answer.addEventListener("input", render);
+document.addEventListener("keydown", e => {
+  if (e.key !== " " || e.target === answer) return;
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (["input","textarea","select","button"].includes(tag) || e.target.isContentEditable) return;
+  if (document.querySelector(".modal-bg.show") || $("practice").style.display === "none") return;
+  e.preventDefault(); sess.replays++; playCurrent(); render(); answer.focus();
+});
 answer.addEventListener("keydown", e => {
+  if (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey){
+    const pos = answer.selectionStart ?? answer.value.length;
+    const before = answer.value.slice(0, pos);
+    if (sess.complete || before === "" || /\s$/.test(before)){ e.preventDefault(); sess.replays++; playCurrent(); render(); }
+    return;
+  }
   if (e.key === "Enter" && e.shiftKey){ e.preventDefault(); hint(); }
   else if (e.key === "Enter"){ e.preventDefault(); if (sess.complete) next(); else { sess.replays++; playCurrent(); render(); } }
   else if (e.key === "Escape"){ e.preventDefault(); sess.replays++; playCurrent(0.6); render(); }
