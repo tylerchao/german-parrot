@@ -2,6 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
     function isAdmin() {
       return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
@@ -10,15 +11,37 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/entitlements/$(request.auth.uid))
         && get(/databases/$(database)/documents/entitlements/$(request.auth.uid)).data.pro == true);
     }
+    // Usage counter for the current month, e.g. users/{uid}/usage/202611 (UTC)
+    function monthKey() { return string(request.time.year() * 100 + request.time.month()); }
+    function usagePath(uid) {
+      return /databases/$(database)/documents/users/$(uid)/usage/$(monthKey());
+    }
+    // Free users: creating a lesson must raise this month's counter by exactly 1, up to 3
+    function withinFreeQuota(uid) {
+      let before = exists(usagePath(uid)) ? get(usagePath(uid)).data.count : 0;
+      return existsAfter(usagePath(uid))
+        && getAfter(usagePath(uid)).data.count == before + 1
+        && getAfter(usagePath(uid)).data.count <= 3;
+    }
 
     // Progress: each user reads/writes only their own doc
     match /users/{uid} {
-      allow read, write: if signedIn() && request.auth.uid == uid;
+      allow read, write: if isOwner(uid);
     }
-    // Own lessons (pasted text / YouTube): creating needs Pro
+    // Own lessons (pasted text / YouTube)
     match /users/{uid}/lessons/{lessonId} {
-      allow read, delete: if signedIn() && request.auth.uid == uid;
-      allow create, update: if signedIn() && request.auth.uid == uid && isPro();
+      allow read, delete: if isOwner(uid);
+      allow create: if isOwner(uid) && (isPro() || withinFreeQuota(uid));
+      allow update: if isOwner(uid) && isPro();
+    }
+    // Monthly usage counter: only +1 steps, only for the current month, never deleted
+    match /users/{uid}/usage/{month} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && month == monthKey()
+        && request.resource.data.keys().hasOnly(["count"]) && request.resource.data.count == 1;
+      allow update: if isOwner(uid) && month == monthKey()
+        && request.resource.data.keys().hasOnly(["count"])
+        && request.resource.data.count == resource.data.count + 1;
     }
     // Free video lessons: everyone can read, only admins publish
     match /publicLessons/{id} {
@@ -27,11 +50,11 @@ service cloud.firestore {
     }
     // Plan flags: set only from the Firebase console (or a future payment backend)
     match /entitlements/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
+      allow read: if isOwner(uid);
       allow write: if false;
     }
     match /admins/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
+      allow read: if isOwner(uid);
       allow write: if false;
     }
   }

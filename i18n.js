@@ -94,9 +94,14 @@ window.GP_I18N = {
     de: "„Eigenen Text einfügen“ und „YouTube-Video hinzufügen“ sind Pro-Funktionen. Bezahlpläne kommen bald; bis dahin kannst du alle Lektionen von A1 bis C2 und die kostenlosen Videos üben."
   },
   proSignedOut:{
-    zh: "「貼上自己的德文」和「加入 YouTube 影片」是 Pro 會員功能，請先登入帳號。",
-    en: "“Paste your own German” and “Add a YouTube video” are Pro features. Please sign in first.",
-    de: "„Eigenen Text einfügen“ und „YouTube-Video hinzufügen“ sind Pro-Funktionen. Bitte melde dich zuerst an."
+    zh: "請先登入。免費帳號每月可以「貼上自己的德文」或「加入 YouTube 影片」3 次，Pro 會員不限次數。",
+    en: "Please sign in first. Free accounts can paste their own German or add a YouTube video 3 times per month; Pro is unlimited.",
+    de: "Bitte melde dich zuerst an. Kostenlose Konten können 3-mal pro Monat eigenen Text einfügen oder ein YouTube-Video hinzufügen; Pro ist unbegrenzt."
+  },
+  proQuota:    {
+    zh: "本月 3 次免費匯入已經用完了，下個月 1 號會重新計算。升級 Pro 就能不限次數匯入（付費方案即將推出）。",
+    en: "You’ve used your 3 free imports this month. They reset on the 1st of next month. Pro gives unlimited imports (paid plans coming soon).",
+    de: "Deine 3 kostenlosen Importe für diesen Monat sind aufgebraucht. Sie werden am 1. des nächsten Monats zurückgesetzt. Pro bietet unbegrenzte Importe (Bezahlpläne kommen bald)."
   },
 
   vTitle:      { zh: "加入 YouTube 影片", en: "Add a YouTube video", de: "YouTube-Video hinzufügen" },
@@ -118,7 +123,9 @@ window.GP_I18N = {
   del:         { zh: "刪除", en: "Delete", de: "Löschen" },
   customLvl:   { zh: "自訂", en: "Custom", de: "Eigene" },
   video:       { zh: "影片", en: "Video", de: "Video" },
-  emptyMine:   { zh: "Pro 會員可以建立自己的文字和影片課程", en: "Pro members can create their own text and video lessons", de: "Pro-Mitglieder können eigene Text- und Video-Lektionen erstellen" },
+  emptyMine:   { zh: "登入後每月可以免費建立 3 個自己的文字或影片課程", en: "Sign in to create up to 3 of your own text or video lessons per month for free", de: "Melde dich an und erstelle kostenlos bis zu 3 eigene Text- oder Video-Lektionen pro Monat" },
+  quotaLeftShort: { zh: "（本月剩 {n} 次）", en: " ({n} left this month)", de: " (noch {n} diesen Monat)" },
+  quotaNote:   { zh: "免費帳號每月可以匯入 {limit} 次，本月已用 {used} 次", en: "Free accounts: {limit} imports per month, {used} used this month", de: "Kostenlose Konten: {limit} Importe pro Monat, diesen Monat {used} genutzt" },
   addText:     { zh: "＋ 貼上自己的德文", en: "＋ Paste your own German", de: "＋ Eigenen Text einfügen" },
   addVideo:    { zh: "▶ 加入 YouTube 影片", en: "▶ Add a YouTube video", de: "▶ YouTube-Video hinzufügen" },
   counter:     { zh: "第 {n} / {total} 句 · {level}", en: "Sentence {n} / {total} · {level}", de: "Satz {n} / {total} · {level}" },

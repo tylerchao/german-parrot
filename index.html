@@ -351,6 +351,16 @@ const mergeVideos = list => {
 };
 let publicVideos = mergeVideos(store.get("gp-public", []));
 let isPro = false, isAdmin = false;
+// free monthly import quota (enforced again by Firestore rules)
+const FREE_QUOTA = 3;
+let signedIn = false, quotaUsed = 0, createLessonCloud = null;
+const quotaLeft = () => Math.max(0, FREE_QUOTA - quotaUsed);
+function canCreate(){
+  if (canPro()) return true;
+  if (!signedIn) { openUpgrade("signedOut"); return false; }
+  if (quotaLeft() <= 0) { openUpgrade("quota"); return false; }
+  return true;
+}
 const canPro = () => isPro || isAdmin;
 const lessons = () => BUILTIN.concat(publicVideos, custom);
 function setPublicLessons(list){
@@ -547,7 +557,7 @@ function renderList(){
     const g = l.public ? byKey("video") : l.custom ? byKey("mine") : (byKey(l.level) || byKey("A1"));
     g.items.push([l, i]);
   });
-  const lock = canPro() ? "" : " 🔒";
+  const lock = canPro() ? "" : signedIn ? t("quotaLeftShort", { n: quotaLeft() }) : " 🔒";
   $("lessonList").innerHTML = groups.map(g => {
     if (g.key === "video" && !g.items.length) return "";
     const isOpen = open[g.key] ?? (g.items.some(([, i]) => i === L) || g.mine);
@@ -563,7 +573,8 @@ function renderList(){
         <div class="mini-bar"><i style="width:${n?d/n*100:0}%"></i></div></button>`;
     }).join("");
     const adds = g.mine ? `
-      ${g.items.length ? "" : `<div class="empty-note">${t("emptyMine")}</div>`}
+      ${!canPro() && signedIn ? `<div class="empty-note">${t("quotaNote", { limit: FREE_QUOTA, used: quotaUsed })}</div>`
+        : g.items.length ? "" : `<div class="empty-note">${t("emptyMine")}</div>`}
       <button class="btn add-btn" data-act="text">${t("addText")}${lock}</button>
       <button class="btn add-btn" data-act="video">${t("addVideo")}${lock}</button>` : "";
     return `<div class="group">
@@ -583,7 +594,7 @@ $("lessonList").onclick = e => {
   }
   const act = e.target.closest("[data-act]");
   if (act){
-    if (!canPro()) { openUpgrade(); return; }
+    if (!canCreate()) return;
     if (act.dataset.act === "text") { $("modal").classList.add("show"); $("customTitle").focus(); }
     else { $("vErr").textContent = ""; $("vmodal").classList.add("show"); $("vUrl").focus(); }
     return;
@@ -600,9 +611,9 @@ $("lessonList").onclick = e => {
   openLesson(+b.dataset.i);
 };
 
-function openUpgrade(){
-  const signedIn = $("authBtn").textContent.startsWith("👤");
-  $("uText").textContent = t(signedIn ? "proSignedIn" : "proSignedOut");
+function openUpgrade(reason){
+  const key = !signedIn ? "proSignedOut" : reason === "quota" ? "proQuota" : "proSignedIn";
+  $("uText").textContent = t(key);
   $("uLogin").style.display = signedIn ? "none" : "";
   $("umodal").classList.add("show");
 }
@@ -769,14 +780,27 @@ $("nextBtn").onclick = next;
 $("prevBtn").onclick = prev;
 
 // custom lessons
+async function saveOwnLesson(lesson){
+  if (!canPro()){
+    if (!createLessonCloud) { openUpgrade("signedOut"); return false; }
+    const ok = await createLessonCloud(lesson);      // writes lesson + usage counter together
+    if (!ok) { openUpgrade("quota"); return false; }
+  }
+  custom.push(lesson); store.set("gp-custom", custom);
+  if (canPro()) syncHook("lesson", lesson);
+  return true;
+}
 $("cancelCustom").onclick = () => $("modal").classList.remove("show");
-$("saveCustom").onclick = () => {
+$("saveCustom").onclick = async () => {
   const text = $("customText").value.replace(/\s+/g, " ").trim();
   const parts = (text.match(/[^.!?]+[.!?]*/g) || []).map(s => s.trim()).filter(s => tokenize(s).length);
   if (!parts.length){ $("customText").focus(); return; }
   const title = $("customTitle").value.trim() || t("myLessonN", { n: custom.length + 1 });
-  custom.push({ id:"c" + Date.now(), title, level:"自訂", custom:true, sentences: parts.map(p => [p, ""]) });
-  store.set("gp-custom", custom); syncHook("lesson", custom[custom.length-1]);
+  const lesson = { id:"c" + Date.now(), title, level:"自訂", custom:true, sentences: parts.map(p => [p, ""]) };
+  $("saveCustom").disabled = true;
+  const ok = await saveOwnLesson(lesson);
+  $("saveCustom").disabled = false;
+  if (!ok) { $("modal").classList.remove("show"); return; }
   $("customTitle").value = ""; $("customText").value = "";
   $("modal").classList.remove("show");
   openLesson(lessons().length - 1, 0);
@@ -792,7 +816,7 @@ $("vFile").onchange = () => {
   rd.onload = () => { $("vSubs").value = rd.result; if (!$("vTitle").value) $("vTitle").value = f.name.replace(/\.(srt|vtt|txt)$/i, ""); };
   rd.readAsText(f);
 };
-$("vSave").onclick = () => {
+$("vSave").onclick = async () => {
   const id = parseYouTubeId($("vUrl").value);
   if (!id){ $("vErr").textContent = t("vErrUrl"); return; }
   let cues = parseSubs($("vSubs").value);
@@ -807,8 +831,10 @@ $("vSave").onclick = () => {
     return;
   }
   lesson.custom = true;
-  custom.push(lesson);
-  store.set("gp-custom", custom); syncHook("lesson", lesson);
+  $("vSave").disabled = true;
+  const ok = await saveOwnLesson(lesson);
+  $("vSave").disabled = false;
+  if (!ok) { $("vmodal").classList.remove("show"); return; }
   $("vUrl").value = ""; $("vTitle").value = ""; $("vSubs").value = ""; $("vFile").value = "";
   $("vmodal").classList.remove("show");
   openLesson(lessons().length - 1, 0);
@@ -933,10 +959,29 @@ function saveProgressSoon(){
     F.setDoc(userRef(), { progress, email: user.email || null, updatedAt: F.serverTimestamp() }, { merge: true })), 800);
 }
 
+const monthKey = () => { const d = new Date(); return String(d.getUTCFullYear() * 100 + d.getUTCMonth() + 1); };
+const usageRef = () => F.doc(db, "users", user.uid, "usage", monthKey());
+async function loadUsage(){
+  try { const u = await F.getDoc(usageRef()); quotaUsed = u.exists() ? (u.data().count || 0) : 0; } catch (e) { quotaUsed = 0; }
+}
+async function createWithQuota(lesson){
+  try {
+    const snap = await F.getDoc(usageRef());
+    const used = snap.exists() ? (snap.data().count || 0) : 0;
+    if (used >= FREE_QUOTA) { quotaUsed = used; renderList(); return false; }
+    const b = F.writeBatch(db);
+    b.set(lessonRef(lesson.id), toCloud(lesson));
+    b.set(usageRef(), { count: used + 1 });
+    await b.commit();
+    quotaUsed = used + 1; renderList();
+    return true;
+  } catch (e) { console.error(e); return false; }
+}
 async function loadPlan(){
   isPro = false; isAdmin = false;
   try { const e = await F.getDoc(F.doc(db, "entitlements", user.uid)); isPro = e.exists() && e.data().pro === true; } catch (e) {}
   try { const a = await F.getDoc(F.doc(db, "admins", user.uid)); isAdmin = a.exists(); } catch (e) {}
+  if (!isPro && !isAdmin) await loadUsage();
   refreshPlanUI();
 }
 async function loadPublic(){
@@ -1020,12 +1065,13 @@ if (auth) {
       renderUser();
       el("aGuest").style.display = "none"; el("aUser").style.display = "";
       syncHook = hook;
+      signedIn = true; createLessonCloud = createWithQuota;
       await loadPlan();
       renderUser();
       await pullAndMerge();
     } else {
       syncHook = () => {};
-      isPro = false; isAdmin = false; refreshPlanUI();
+      isPro = false; isAdmin = false; signedIn = false; quotaUsed = 0; createLessonCloud = null; refreshPlanUI();
       authBtn.textContent = t("login");
       syncState.textContent = "";
       el("aGuest").style.display = ""; el("aUser").style.display = "none";
