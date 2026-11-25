@@ -143,6 +143,18 @@
   .auth-links{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
   .sync{font-size:12px;color:var(--muted)}
   .ok-msg{color:var(--ok)}
+  .review-box{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:8px}
+  .review-box .lesson[data-empty] .meta span:first-child{color:var(--muted)}
+  .video-err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:20px;background:rgba(0,0,0,.85);color:#fff;font-size:14px}
+  .st-nums{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;margin:8px 0 14px}
+  .st-nums b{display:block;font-size:22px}
+  .st-nums span{font-size:12px;color:var(--muted)}
+  .modal h4{margin:14px 0 6px;font-size:13px}
+  .st-row{display:grid;grid-template-columns:32px 1fr 64px;gap:8px;align-items:center;font-size:13px;margin-bottom:4px}
+  .st-row .mini-bar{margin:0}
+  .st-row span:last-child{text-align:right;color:var(--muted)}
+  .st-words{display:flex;flex-wrap:wrap;gap:6px}
+  .st-words span{font-family:"JetBrains Mono",monospace;font-size:13px;padding:3px 8px;border-radius:6px;background:var(--soft);border:1px solid var(--line)}
   .del{font-size:11px;color:var(--bad);background:none;border:none;cursor:pointer;padding:0}
 </style>
 </head>
@@ -169,7 +181,7 @@
       </div>
       <div class="progress"><i id="progBar"></i></div>
       <div id="videoArea" style="display:none">
-        <div class="video-wrap"><div id="ytPlayer"></div><div class="cc-cover" id="ccCover" data-i18n="ccCover">字幕遮罩</div></div>
+        <div class="video-wrap"><div id="ytPlayer"></div><div class="cc-cover" id="ccCover" data-i18n="ccCover">字幕遮罩</div><div class="video-err" id="videoErr" data-i18n="videoGone"></div></div>
         <div class="video-tools"><button class="chip on" id="ccBtn" data-i18n="ccBtn">遮住字幕</button><span data-i18n="videoTip"></span></div>
       </div>
 
@@ -270,6 +282,14 @@
   </div>
 </div>
 
+<div class="modal-bg" id="smodal">
+  <div class="modal">
+    <h3 data-i18n="statsTitle"></h3>
+    <div id="statsBody"></div>
+    <div class="row"><button class="btn primary" id="sClose" data-i18n="close"></button></div>
+  </div>
+</div>
+
 <div class="modal-bg" id="umodal">
   <div class="modal">
     <h3 data-i18n="proTitle"></h3>
@@ -362,7 +382,55 @@ function canCreate(){
   return true;
 }
 const canPro = () => isPro || isAdmin;
-const lessons = () => BUILTIN.concat(publicVideos, custom);
+let reviewLesson = null;   // built on demand, always last in lessons()
+const lessons = () => BUILTIN.concat(publicVideos, custom, reviewLesson ? [reviewLesson] : []);
+const findLesson = id => lessons().find(x => x.id === id);
+function openLessonById(id, startAt){ const i = lessons().findIndex(x => x.id === id); if (i >= 0) openLesson(i, startAt); }
+
+// ---------- mistake review (spaced repetition) ----------
+const DAY = 86400000;
+const INTERVALS = [1, 3, 7, 14, 30];          // days for box 0..4; passing box 4 = mastered
+const FREE_REVIEW_CAP = 20, SESSION_SIZE = 20;
+let review = store.get("gp-review", {});       // "lessonId#idx" -> {box, due, last, lapses}
+let stuckWords = store.get("gp-words", {});    // word -> times revealed by hint/answer
+let mastered = store.get("gp-mastered", 0);
+const startOfToday = () => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); };
+const dueItems = () => Object.entries(review).filter(([, e]) => e.due <= Date.now()).sort((a, b) => a[1].due - b[1].due);
+function saveReview(){
+  if (!canPro()){
+    const keys = Object.keys(review).sort((a, b) => review[b].last - review[a].last);
+    keys.slice(FREE_REVIEW_CAP).forEach(k => delete review[k]);
+  }
+  store.set("gp-review", review); store.set("gp-words", stuckWords); store.set("gp-mastered", mastered);
+  syncHook("progress");
+}
+function updateReview(lessonId, idx, ok, inReview){
+  const key = lessonId + "#" + idx, e = review[key], now = Date.now();
+  if (!ok){
+    review[key] = { box: 0, due: startOfToday() + INTERVALS[0] * DAY, last: now, lapses: (e?.lapses || 0) + 1 };
+  } else if (e && (inReview || e.due <= now)){
+    const box = e.box + 1;
+    if (box >= INTERVALS.length){ delete review[key]; mastered++; }
+    else review[key] = { ...e, box, due: startOfToday() + INTERVALS[box] * DAY, last: now };
+  } else return;
+  saveReview();
+}
+function buildReview(){
+  const refs = [], sentences = [];
+  for (const [key] of dueItems()){
+    if (refs.length >= SESSION_SIZE) break;
+    const cut = key.lastIndexOf("#"), id = key.slice(0, cut), idx = +key.slice(cut + 1);
+    const src = findLesson(id);
+    if (!src || !src.sentences[idx]) { delete review[key]; continue; }
+    refs.push({ id, idx }); sentences.push(src.sentences[idx]);
+  }
+  return refs.length ? { id: "__review", type: "review", title: t("reviewTitle"), level: "", refs, sentences } : null;
+}
+function startReview(){
+  reviewLesson = buildReview();
+  if (!reviewLesson){ renderList(); return; }
+  openLessonById("__review", 0);
+}
 function setPublicLessons(list){
   const cur = (lessons()[L] || {}).id;
   publicVideos = mergeVideos(list); store.set("gp-public", list);
@@ -375,7 +443,12 @@ function refreshPlanUI(){
   renderList();
 }
 let syncHook = () => {};   // replaced by the Firebase module when signed in
-function applyCloud(cloudProgress, cloudLessons){
+function applyCloud(cloudProgress, cloudLessons, cloudExtra){
+  const x = cloudExtra || {};
+  Object.entries(x.review || {}).forEach(([k, e]) => { if (!review[k] || (e.last || 0) > (review[k].last || 0)) review[k] = e; });
+  Object.entries(x.words || {}).forEach(([w, n]) => { stuckWords[w] = Math.max(stuckWords[w] || 0, n); });
+  mastered = Math.max(mastered, x.mastered || 0);
+  store.set("gp-review", review); store.set("gp-words", stuckWords); store.set("gp-mastered", mastered);
   // progress: union of completed sentence indexes
   Object.keys(cloudProgress || {}).forEach(k => {
     const set = new Set([...(progress[k] || []), ...(cloudProgress[k] || [])]);
@@ -446,10 +519,12 @@ function loadYT(){
 window.onYouTubeIframeAPIReady = () => { ytReady = true; if (ytPending) { createPlayer(ytPending); ytPending = null; } };
 function createPlayer(id){
   ytCurrent = id;
-  ytPlayer = new YT.Player("ytPlayer", { videoId:id, playerVars:{ rel:0, playsinline:1, iv_load_policy:3, modestbranding:1 } });
+  ytPlayer = new YT.Player("ytPlayer", { videoId:id, playerVars:{ rel:0, playsinline:1, iv_load_policy:3, modestbranding:1 },
+    events: { onError: e => { if ([2,5,100,101,150].includes(e.data)) $("videoErr").style.display = "flex"; } } });
 }
 function ensureVideo(id){
   $("videoArea").style.display = "";
+  if (ytCurrent !== id) $("videoErr").style.display = "none";
   if (!ytReady){ ytPending = id; loadYT(); return; }
   if (!ytPlayer) createPlayer(id);
   else if (ytCurrent !== id){ ytCurrent = id; try{ ytPlayer.cueVideoById(id); }catch(e){} }
@@ -479,7 +554,9 @@ function playSegment(start, end, r){
   }, 80);
 }
 function playCurrent(r){
-  const l = lessons()[L];
+  let l = lessons()[L];
+  if (l.type === "review"){ const ref = l.refs[S]; l = findLesson(ref.id) || l;
+    if (l.type === "video"){ const s = l.sentences[ref.idx]; playSegment(s[2], s[3], r || rate); return; } }
   if (l.type === "video"){ const s = l.sentences[S]; playSegment(s[2], s[3], r || rate); }
   else speak(sess.de, r);
 }
@@ -554,11 +631,22 @@ function renderList(){
   groups.push({ key: "video", label: t("grpVideo"), items: [] }, { key: "mine", label: t("grpMine"), items: [], mine: true });
   const byKey = k => groups.find(g => g.key === k);
   all.forEach((l, i) => {
+    if (l.type === "review") return;
     const g = l.public ? byKey("video") : l.custom ? byKey("mine") : (byKey(l.level) || byKey("A1"));
     g.items.push([l, i]);
   });
   const lock = canPro() ? "" : signedIn ? t("quotaLeftShort", { n: quotaLeft() }) : " 🔒";
-  $("lessonList").innerHTML = groups.map(g => {
+  const due = dueItems().length, inReview = Object.keys(review).length;
+  const onReview = (all[L] || {}).type === "review";
+  const top = `<div class="review-box">
+    <button class="lesson ${onReview ? "active" : ""}" data-act="review" ${due ? "" : "data-empty=1"}>
+      <div class="name">${t("reviewTitle")}</div>
+      <div class="meta"><span>${due ? t("reviewDue", { n: due }) : t("reviewNone")}</span><span>${inReview}${canPro() ? "" : "/" + FREE_REVIEW_CAP}</span></div>
+    </button>
+    ${inReview ? "" : `<div class="empty-note">${t("reviewEmpty")}</div>`}
+    <button class="btn add-btn" data-act="stats">${t("statsBtn")}${canPro() ? "" : " 🔒"}</button>
+  </div>`;
+  $("lessonList").innerHTML = top + groups.map(g => {
     if (g.key === "video" && !g.items.length) return "";
     const isOpen = open[g.key] ?? (g.items.some(([, i]) => i === L) || g.mine);
     const done = g.items.reduce((a, [l]) => a + lessonDone(l.id).length, 0);
@@ -593,6 +681,8 @@ $("lessonList").onclick = e => {
     store.set("gp-open", openState); renderList(); return;
   }
   const act = e.target.closest("[data-act]");
+  if (act && act.dataset.act === "review"){ startReview(); return; }
+  if (act && act.dataset.act === "stats"){ if (canPro()) openStats(); else openUpgrade("stats"); return; }
   if (act){
     if (!canCreate()) return;
     if (act.dataset.act === "text") { $("modal").classList.add("show"); $("customTitle").focus(); }
@@ -612,10 +702,32 @@ $("lessonList").onclick = e => {
 };
 
 function openUpgrade(reason){
-  const key = !signedIn ? "proSignedOut" : reason === "quota" ? "proQuota" : "proSignedIn";
+  const key = reason === "stats" ? "proStats" : !signedIn ? "proSignedOut" : reason === "quota" ? "proQuota" : "proSignedIn";
   $("uText").textContent = t(key);
   $("uLogin").style.display = signedIn ? "none" : "";
   $("umodal").classList.add("show");
+}
+
+function openStats(){
+  const lv = LEVELS.map(level => {
+    const ls = BUILTIN.filter(l => l.level === level);
+    const total = ls.reduce((a, l) => a + l.sentences.length, 0);
+    const done = ls.reduce((a, l) => a + lessonDone(l.id).length, 0);
+    return `<div class="st-row"><span>${level}</span><div class="mini-bar"><i style="width:${total ? done/total*100 : 0}%"></i></div><span>${done}/${total}</span></div>`;
+  }).join("");
+  const totalDone = Object.keys(progress).filter(k => !k.endsWith("-perfect")).reduce((a, k) => a + (progress[k] || []).length, 0);
+  const top = Object.entries(stuckWords).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  $("statsBody").innerHTML = `
+    <div class="st-nums">
+      <div><b>${totalDone}</b><span>${t("stTotalDone")}</span></div>
+      <div><b>${Object.keys(review).length}</b><span>${t("stInReview")}</span></div>
+      <div><b>${dueItems().length}</b><span>${t("stDueToday")}</span></div>
+      <div><b>${mastered}</b><span>${t("stMastered")}</span></div>
+    </div>
+    <h4>${t("stByLevel")}</h4>${lv}
+    <h4>${t("stTopWords")}</h4>
+    ${top.length ? `<div class="st-words">${top.map(([w, n]) => `<span>${esc(w)} <b>×${n}</b></span>`).join("")}</div>` : `<p class="counter">${t("stNoWords")}</p>`}`;
+  $("smodal").classList.add("show");
 }
 
 function openLesson(i, startAt){
@@ -625,7 +737,7 @@ function openLesson(i, startAt){
   S = startAt != null ? startAt : (() => { for (let k=0;k<l.sentences.length;k++) if(!done.includes(k)) return k; return 0; })();
   $("practice").style.display = ""; $("summary").style.display = "none";
   setLessonTitle(l);
-  store.set("gp-last", l.id);
+  if (l.type !== "review") store.set("gp-last", l.id);
   if (l.type === "video") ensureVideo(l.videoId); else hideVideo();
   renderList(); openSentence();
 }
@@ -636,13 +748,15 @@ function setLessonTitle(l){
 }
 function updateSentenceLabels(){
   const l = lessons()[L];
-  $("counter").textContent = t("counter", { n: S+1, total: l.sentences.length, level: lvl(l) });
+  const lv = l.type === "review" ? (findLesson(l.refs[S].id) || {}).title || "" : lvl(l);
+  $("counter").textContent = t("counter", { n: S+1, total: l.sentences.length, level: lv });
   $("nextBtn").textContent = t(S === l.sentences.length-1 ? "finishBtn" : "nextBtn");
 }
 function openSentence(){
   const l = lessons()[L];
   const [de, zh] = l.sentences[S];
   sess = { de, zh, words: tokenize(de), replays:0, hints:0, errSet:new Set(), revealed:false, complete:false, hinted:new Set() };
+  if (l.type === "review"){ const src = findLesson(l.refs[S].id); if (src && src.type === "video") ensureVideo(src.videoId); else hideVideo(); }
   answer.value = ""; answer.classList.remove("done"); answer.disabled = false;
   $("feedback").classList.remove("show");
   updateSentenceLabels();
@@ -705,7 +819,9 @@ function complete(){
   sess.complete = true;
   answer.classList.add("done");
   const perfect = !sess.revealed && sess.hints === 0 && sess.errSet.size === 0;
-  markDone(lessons()[L].id, S, perfect);
+  const cl = lessons()[L];
+  if (cl.type === "review") updateReview(cl.refs[S].id, cl.refs[S].idx, perfect, true);
+  else { markDone(cl.id, S, perfect); updateReview(cl.id, S, perfect, false); }
   const label = t(sess.revealed ? "bRevealed" : perfect ? "bPerfect" : "bDone");
   const fb = $("feedback");
   fb.innerHTML = `<span class="badge ${perfect?"":"meh"}">${label}</span>
@@ -728,21 +844,36 @@ function hint(){
   const i = status.findIndex(x => x !== "ok");
   if (i < 0) return;
   sess.hints++; sess.hinted.add(i);
+  const w = sess.words[i].toLowerCase(); stuckWords[w] = (stuckWords[w] || 0) + 1;
   answer.focus(); render();
 }
 function reveal(){
   if (sess.complete) return;
   sess.revealed = true;
-  sess.words.forEach((_, i) => sess.hinted.add(i));
+  const { status } = computeStatus();
+  sess.words.forEach((w, i) => { if (status[i] !== "ok"){ const k = w.toLowerCase(); stuckWords[k] = (stuckWords[k] || 0) + 1; } sess.hinted.add(i); });
   render();
 }
 
 function showSummary(){
   const l = lessons()[L];
+  if (l.type === "review"){
+    $("practice").style.display = "none"; hideVideo();
+    const s = $("summary"); s.style.display = "";
+    s.innerHTML = `<h2>🎉 ${t("reviewDoneTitle")}</h2>
+      <p class="counter">${esc(t("reviewDoneText", { n: l.sentences.length }))}</p>
+      <div class="actions" style="justify-content:center">
+        ${dueItems().length ? `<button class="btn primary" id="moreReview">${t("reviewMore", { n: dueItems().length })}</button>` : ""}
+        <button class="btn" id="backLessons">${t("backLessons")}</button>
+      </div>`;
+    if ($("moreReview")) $("moreReview").onclick = startReview;
+    $("backLessons").onclick = () => { const last = store.get("gp-last", null); const i = lessons().findIndex(x => x.id === last); openLesson(i >= 0 ? i : 0); };
+    renderList(); return;
+  }
   const n = l.sentences.length, d = lessonDone(l.id).length, p = (progress[l.id+"-perfect"]||[]).length;
   $("practice").style.display = "none";
   const s = $("summary"); s.style.display = "";
-  const hasNext = L < lessons().length - 1;
+  const hasNext = L < lessons().length - 1 && lessons()[L+1].type !== "review";
   s.innerHTML = `<h2>🎉 ${esc(t("sumDone", { title: l.title }))}</h2><div class="counter">${esc(l.level)}</div>
     <div class="nums"><div><b>${d}/${n}</b><span>${t("sumSent")}</span></div><div><b>${p}</b><span>${t("sumPerfect")}</span></div></div>
     <div class="actions" style="justify-content:center">
@@ -803,7 +934,7 @@ $("saveCustom").onclick = async () => {
   if (!ok) { $("modal").classList.remove("show"); return; }
   $("customTitle").value = ""; $("customText").value = "";
   $("modal").classList.remove("show");
-  openLesson(lessons().length - 1, 0);
+  openLessonById(lesson.id, 0);
 };
 
 
@@ -837,13 +968,14 @@ $("vSave").onclick = async () => {
   if (!ok) { $("vmodal").classList.remove("show"); return; }
   $("vUrl").value = ""; $("vTitle").value = ""; $("vSubs").value = ""; $("vFile").value = "";
   $("vmodal").classList.remove("show");
-  openLesson(lessons().length - 1, 0);
+  openLessonById(lesson.id, 0);
 };
 
 // auth modal (open/close only; sign-in logic lives in the Firebase module)
 $("authBtn").onclick = () => { $("aErr").textContent = ""; $("amodal").classList.add("show"); };
 $("aCancel").onclick = $("aClose").onclick = () => $("amodal").classList.remove("show");
 $("uClose").onclick = () => $("umodal").classList.remove("show");
+$("sClose").onclick = () => $("smodal").classList.remove("show");
 $("uLogin").onclick = () => { $("umodal").classList.remove("show"); $("authBtn").click(); };
 
 // ---------- theme ----------
@@ -956,7 +1088,7 @@ let progTimer = null;
 function saveProgressSoon(){
   clearTimeout(progTimer);
   progTimer = setTimeout(() => guarded(() =>
-    F.setDoc(userRef(), { progress, email: user.email || null, updatedAt: F.serverTimestamp() }, { merge: true })), 800);
+    F.setDoc(userRef(), { progress, review, words: stuckWords, mastered, email: user.email || null, updatedAt: F.serverTimestamp() }, { merge: true })), 800);
 }
 
 const monthKey = () => { const d = new Date(); return String(d.getUTCFullYear() * 100 + d.getUTCMonth() + 1); };
@@ -999,9 +1131,10 @@ async function pullAndMerge(){
     const cloudProgress = snap.exists() ? (snap.data().progress || {}) : {};
     const ls = await F.getDocs(F.collection(db, "users", user.uid, "lessons"));
     const cloudLessons = ls.docs.map(d => fromCloud(d.data()));
-    const localOnly = applyCloud(cloudProgress, cloudLessons);
+    const d = snap.exists() ? snap.data() : {};
+    const localOnly = applyCloud(cloudProgress, cloudLessons, { review: d.review, words: d.words, mastered: d.mastered });
     if (canPro()) await Promise.all(localOnly.map(l => F.setDoc(lessonRef(l.id), toCloud(l))));
-    await F.setDoc(userRef(), { progress, email: user.email || null, updatedAt: F.serverTimestamp() }, { merge: true });
+    await F.setDoc(userRef(), { progress, review, words: stuckWords, mastered, email: user.email || null, updatedAt: F.serverTimestamp() }, { merge: true });
   });
 }
 
