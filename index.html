@@ -305,6 +305,7 @@
 
 <script src="lessons.js"></script>
 <script src="i18n.js"></script>
+<script src="videos.js"></script>
 <script>
 const LEVELS = ["A1","A2","B1","B2","C1","C2"];
 const BUILTIN = (window.GP_LEVELS || []).flatMap(g => g.topics.map(t => ({ ...t, level: g.level })));
@@ -324,12 +325,12 @@ function t(key, vars){
   return str;
 }
 function lvl(l){
-  if (l.type === "video") return t("video");
+  if (l.type === "video") return LEVELS.includes(l.level) ? `${l.level} · ${t("video")}` : t("video");
   if (l.custom) return t("customLvl");
   return l.level;
 }
 function topicSub(l){
-  if (l.type === "video") return t("video");
+  if (l.type === "video") return LEVELS.includes(l.level) ? `${l.level} · ${t("video")}` : t("video");
   if (lang === "zh") return l.zh || "";
   if (lang === "en") return (window.GP_TOPIC_EN || {})[l.id] || "";
   return "";
@@ -342,13 +343,19 @@ function applyI18n(){
 }
 let custom = store.get("gp-custom", []);
 let progress = store.get("gp-progress", {});
-let publicVideos = store.get("gp-public", []);
+const STATIC_VIDEOS = window.GP_VIDEOS || [];
+const lvIdx = l => { const i = ["A1","A2","B1","B2","C1","C2"].indexOf(l.level); return i < 0 ? 99 : i; };
+const mergeVideos = list => {
+  const ids = new Set(STATIC_VIDEOS.map(v => v.id));
+  return STATIC_VIDEOS.concat(list.filter(v => !ids.has(v.id))).sort((a, b) => lvIdx(a) - lvIdx(b));
+};
+let publicVideos = mergeVideos(store.get("gp-public", []));
 let isPro = false, isAdmin = false;
 const canPro = () => isPro || isAdmin;
 const lessons = () => BUILTIN.concat(publicVideos, custom);
 function setPublicLessons(list){
   const cur = (lessons()[L] || {}).id;
-  publicVideos = list; store.set("gp-public", list);
+  publicVideos = mergeVideos(list); store.set("gp-public", list);
   const ni = lessons().findIndex(x => x.id === cur);
   if (ni >= 0) L = ni;
   renderList();
@@ -548,7 +555,7 @@ function renderList(){
     const total = g.items.reduce((a, [l]) => a + l.sentences.length, 0);
     const items = g.items.map(([l, i]) => {
       const d = lessonDone(l.id).length, n = l.sentences.length;
-      const canDel = l.custom || (l.public && isAdmin);
+      const canDel = l.custom || (l.public && isAdmin && !STATIC_VIDEOS.some(v => v.id === l.id));
       const del = canDel ? `<span class="del" data-del="${i}">${t("del")}</span>` : "";
       return `<button class="lesson ${i===L?"active":""}" data-i="${i}">
         <div class="name">${esc(l.title)}</div>
