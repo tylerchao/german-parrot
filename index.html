@@ -138,7 +138,9 @@
   .words::before{content:"";position:absolute;top:0;bottom:0;left:44px;width:2px;background:var(--margin);opacity:.75}
   .w{display:inline-block;margin:0 9px 0 0;padding:0 2px;white-space:pre;vertical-align:baseline}
   .w.ok{color:var(--ink)}
-  .w.empty{height:1em;border-bottom:2px solid var(--muted);opacity:.45;vertical-align:-2px;min-width:1.2ch}
+  .w.empty{display:inline-flex;gap:3px;align-items:flex-end;height:1em;vertical-align:-2px}
+  .w.empty i{display:inline-block;width:.5em;height:0;border-bottom:2px solid var(--muted);opacity:.55}
+  .w.empty b{font-weight:400;color:var(--muted);line-height:0;padding-bottom:.1em}
   .w.case{color:var(--case);background:var(--case-bg);border-radius:3px}
   .w.bad{color:var(--bad);text-decoration:line-through;text-decoration-thickness:1px}
   .misses{margin:0 0 10px;font-size:13px;color:var(--muted)}
@@ -902,7 +904,8 @@ function render(){
     const st = status[i];
     if (st === "ok") return `<span class="w ok">${esc(w)}</span>`;
     if (st && st.c) return `<span class="w case">${esc(st.c)}</span>`;
-    return `<span class="w empty" style="width:${Math.max(1.2, w.length * 0.62).toFixed(2)}em"></span>`;
+    // one short line per letter so the learner can count letters; keep - and ' visible (E-Mail → _-____)
+    return `<span class="w empty">${[...w].map(c => /[\p{L}\p{N}]/u.test(c) ? "<i></i>" : `<b>${esc(c)}</b>`).join("")}</span>`;
   }).join("");
   $("misses").innerHTML = misses.length
     ? `${t("missing")}${misses.map(t => `<span class="w bad">${esc(t)}</span>`).join("")}` : "";
